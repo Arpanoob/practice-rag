@@ -41,3 +41,14 @@ export interface UseSearchResult {
   reset: () => void;
   abort: () => void;
 }
+
+export interface ChatHistoryItem {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface SearchParams {
+  videoUrl: string;
+  query: string;
+  history?: ChatHistoryItem[];
+}

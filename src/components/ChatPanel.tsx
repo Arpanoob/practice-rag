@@ -103,12 +103,21 @@ export function ChatPanel({
     setMessages((prev) => [...prev, userMessage]);
 
     try {
+      const history = messages
+        .filter((m) => !m.id.startsWith("msg-welcome"))
+        .map((m) => ({
+          role: (m.sender === "user" ? "user" : "assistant") as
+            | "user"
+            | "assistant",
+          content: m.text,
+        }));
+
       // Call backend POST /api/ask
       const result = await search({
         videoUrl,
         query,
+        history,
       });
-
       // A null result means the request failed or was aborted. Never fabricate
       // an answer or timestamps — surface an honest message instead.
       if (!result) {
@@ -128,13 +137,13 @@ export function ChatPanel({
       const botText =
         result.answer ||
         `I couldn't find relevant content in the transcript for: "${query}".`;
-      const citations: ChatTimestampCitation[] = (result.relevantChunks ?? []).map(
-        (chunk) => ({
-          timeSeconds: chunk.start,
-          label: formatTimestamp(chunk.start),
-          snippet: chunk.text,
-        })
-      );
+      const citations: ChatTimestampCitation[] = (
+        result.relevantChunks ?? []
+      ).map((chunk) => ({
+        timeSeconds: chunk.start,
+        label: formatTimestamp(chunk.start),
+        snippet: chunk.text,
+      }));
 
       const botMessage: ChatMessage = {
         id: `bot-${Date.now()}`,
@@ -275,7 +284,10 @@ export function ChatPanel({
                             type="button"
                             onClick={() => onSeek(cite.timeSeconds)}
                             className="group inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-mono bg-neutral-950/80 hover:bg-red-600/20 border border-neutral-800 hover:border-red-500/50 text-neutral-300 hover:text-white transition-all cursor-pointer shadow-sm active:scale-95"
-                            title={cite.snippet || `Jump to ${formatTimestamp(cite.timeSeconds)}`}
+                            title={
+                              cite.snippet ||
+                              `Jump to ${formatTimestamp(cite.timeSeconds)}`
+                            }
                           >
                             <Play className="w-3 h-3 text-red-400 group-hover:text-red-300 fill-current" />
                             <span className="font-semibold text-red-400 group-hover:text-red-300">
@@ -325,7 +337,9 @@ export function ChatPanel({
         <button
           type="button"
           onClick={() =>
-            handleSendMessage("In which time in video does the main topic start?")
+            handleSendMessage(
+              "In which time in video does the main topic start?",
+            )
           }
           className="px-2 py-0.5 rounded-md bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 text-[11px] text-neutral-400 hover:text-neutral-200 shrink-0 cursor-pointer transition-colors"
         >

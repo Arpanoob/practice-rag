@@ -43,17 +43,19 @@ export function useSearch(options: UseSearchOptions = {}): UseSearchResult {
   const search = useCallback(
     async (
       paramsOrQuery: SearchParams | string,
-      optionalVideoUrl?: string
+      optionalVideoUrl?: string,
     ): Promise<VideoSearchResult | null> => {
       const isString = typeof paramsOrQuery === "string";
-      const query = (isString ? paramsOrQuery : paramsOrQuery.query || "").trim();
+      const query = (
+        isString ? paramsOrQuery : paramsOrQuery.query || ""
+      ).trim();
       const videoUrl = (
         optionalVideoUrl ||
         (!isString ? paramsOrQuery.videoUrl : "") ||
         options.defaultVideoUrl ||
         ""
       ).trim();
-
+      const history = !isString ? paramsOrQuery.history : undefined;
       if (!query) {
         setError("Search query cannot be empty.");
         return null;
@@ -80,7 +82,7 @@ export function useSearch(options: UseSearchOptions = {}): UseSearchResult {
             "Content-Type": "application/json",
             Accept: "application/json",
           },
-          body: JSON.stringify({ videoUrl, query }),
+          body: JSON.stringify({ videoUrl, query, history }),
           signal: controller.signal,
         });
 
@@ -88,7 +90,7 @@ export function useSearch(options: UseSearchOptions = {}): UseSearchResult {
 
         if (!response.ok) {
           throw new Error(
-            body?.error || `Search failed with status ${response.status}`
+            body?.error || `Search failed with status ${response.status}`,
           );
         }
 
@@ -119,7 +121,7 @@ export function useSearch(options: UseSearchOptions = {}): UseSearchResult {
         }
       }
     },
-    [options.endpoint, options.defaultVideoUrl]
+    [options.endpoint, options.defaultVideoUrl],
   );
 
   return {

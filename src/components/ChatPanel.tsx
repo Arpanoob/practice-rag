@@ -8,7 +8,7 @@ import {
   Play,
   RotateCcw,
 } from "lucide-react";
-import { formatTimestamp } from "../utils/youtube";
+import { formatTimestamp, parseTimestamp } from "../utils/youtube";
 import { useSearch, type VideoSearchResult } from "../hooks/useSearch";
 
 export interface ChatTimestampCitation {
@@ -23,6 +23,172 @@ export interface ChatMessage {
   text: string;
   timestamp: string;
   citations?: ChatTimestampCitation[];
+}
+
+/**
+ * Parses inline text formatting:
+ * - Timestamps: [0:04], [1:28] -> clickable jump buttons
+ * - Bold: **text** -> <strong>
+ * - Code: `code` -> <code>
+ * - Italic: *text* -> <em>
+ */
+function renderInlineSegments(
+  text: string,
+  onSeek: (seconds: number) => void
+): React.ReactNode[] {
+  const regex =
+    /(\[(\d{1,2}:\d{2}(?::\d{2})?)\])|(\*\*(.+?)\*\*)|(`([^`]+)`)|(\*([^*]+)\*)/g;
+  const nodes: React.ReactNode[] = [];
+  let lastIdx = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIdx) {
+      nodes.push(text.slice(lastIdx, match.index));
+    }
+
+    if (match[1]) {
+      const timeStr = match[2];
+      const seconds = parseTimestamp(timeStr);
+      nodes.push(
+        <button
+          key={`inline-ts-${match.index}`}
+          type="button"
+          onClick={() => seconds !== null && onSeek(seconds)}
+          className="inline-flex items-center gap-1 mx-1 px-1.5 py-0.5 rounded-md bg-red-500/20 hover:bg-red-500/35 border border-red-500/40 hover:border-red-500/70 text-red-400 hover:text-red-300 font-mono text-[11px] font-semibold transition-all cursor-pointer align-baseline shadow-xs active:scale-95"
+          title={`Jump video to ${timeStr}`}
+        >
+          <Play className="w-2.5 h-2.5 fill-current shrink-0" />
+          <span>{timeStr}</span>
+        </button>
+      );
+    } else if (match[3]) {
+      nodes.push(
+        <strong key={`inline-b-${match.index}`} className="font-bold text-neutral-100">
+          {match[4]}
+        </strong>
+      );
+    } else if (match[5]) {
+      nodes.push(
+        <code
+          key={`inline-code-${match.index}`}
+          className="px-1.5 py-0.5 rounded bg-neutral-800 text-red-300 font-mono text-xs border border-neutral-700/60"
+        >
+          {match[6]}
+        </code>
+      );
+    } else if (match[7]) {
+      nodes.push(
+        <em key={`inline-em-${match.index}`} className="italic text-neutral-200">
+          {match[8]}
+        </em>
+      );
+    }
+
+    lastIdx = regex.lastIndex;
+  }
+
+  if (lastIdx < text.length) {
+    nodes.push(text.slice(lastIdx));
+  }
+
+  return nodes;
+}
+
+/**
+ * Formats multi-line bot responses with numbered lists, bullet lists,
+ * bold tags, headers, and clickable timestamps.
+ */
+function FormattedChatMessage({
+  text,
+  onSeek,
+  isUser,
+}: {
+  text: string;
+  onSeek: (seconds: number) => void;
+  isUser: boolean;
+}) {
+  if (isUser) {
+    return <p className="whitespace-pre-wrap">{text}</p>;
+  }
+
+  const lines = text.split("\n");
+
+  return (
+    <div className="space-y-2 text-xs sm:text-sm text-neutral-200 leading-relaxed font-sans">
+      {lines.map((line, idx) => {
+        const trimmed = line.trim();
+
+        if (!trimmed) {
+          return <div key={idx} className="h-1.5" />;
+        }
+
+        // Header 3 (###)
+        if (trimmed.startsWith("###")) {
+          const title = trimmed.replace(/^###\s*/, "");
+          return (
+            <div
+              key={idx}
+              className="pt-2 pb-0.5 font-bold text-neutral-100 text-sm tracking-wide"
+            >
+              {renderInlineSegments(title, onSeek)}
+            </div>
+          );
+        }
+
+        // Header 2 (##)
+        if (trimmed.startsWith("##")) {
+          const title = trimmed.replace(/^##\s*/, "");
+          return (
+            <div
+              key={idx}
+              className="pt-2.5 pb-0.5 font-extrabold text-white text-base tracking-wide"
+            >
+              {renderInlineSegments(title, onSeek)}
+            </div>
+          );
+        }
+
+        // Numbered list item: e.g. "1. **The Beginning of Apple**:"
+        const numberedMatch = /^(\d+)\.\s+(.*)$/.exec(trimmed);
+        if (numberedMatch) {
+          const num = numberedMatch[1];
+          const content = numberedMatch[2];
+          return (
+            <div key={idx} className="flex items-start gap-2 pt-1">
+              <span className="flex items-center justify-center w-5 h-5 rounded-full bg-red-500/20 text-red-400 text-xs font-semibold shrink-0 mt-0.5">
+                {num}
+              </span>
+              <div className="flex-1 min-w-0 leading-relaxed">
+                {renderInlineSegments(content, onSeek)}
+              </div>
+            </div>
+          );
+        }
+
+        // Bullet list item: e.g. "- He recounts..." or "* text"
+        const bulletMatch = /^[-*•]\s+(.*)$/.exec(trimmed);
+        if (bulletMatch) {
+          const content = bulletMatch[1];
+          return (
+            <div key={idx} className="flex items-start gap-2 pl-3 py-0.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-red-400 mt-2 shrink-0" />
+              <div className="flex-1 min-w-0 leading-relaxed">
+                {renderInlineSegments(content, onSeek)}
+              </div>
+            </div>
+          );
+        }
+
+        // Regular paragraph
+        return (
+          <p key={idx} className="leading-relaxed">
+            {renderInlineSegments(line, onSeek)}
+          </p>
+        );
+      })}
+    </div>
+  );
 }
 
 interface ChatPanelProps {
@@ -265,7 +431,11 @@ export function ChatPanel({
                       : "bg-neutral-900/90 border border-neutral-800 text-neutral-200 rounded-tl-none"
                   }`}
                 >
-                  <p className="whitespace-pre-wrap">{message.text}</p>
+                  <FormattedChatMessage
+                    text={message.text}
+                    onSeek={onSeek}
+                    isUser={isUser}
+                  />
 
                   {/* Clickable Timestamp Citations / Jump Badges */}
                   {message.citations && message.citations.length > 0 && (

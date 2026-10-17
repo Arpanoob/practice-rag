@@ -72,9 +72,12 @@ export function IngestionLoader({
   );
   const [error, setError] = useState<string | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
+  const [showPasteModal, setShowPasteModal] = useState(false);
+  const [customTranscriptText, setCustomTranscriptText] = useState("");
+  const [isCustomStreaming, setIsCustomStreaming] = useState(false);
 
   useEffect(() => {
-    if (!videoUrl) return;
+    if (!videoUrl || isCustomStreaming) return;
 
     const apiBase = import.meta.env.VITE_API_BASE_URL || "";
     const sseUrl = `${apiBase}/api/search/ingest-stream?videoUrl=${encodeURIComponent(
@@ -129,7 +132,92 @@ export function IngestionLoader({
     return () => {
       eventSource.close();
     };
-  }, [videoUrl, onComplete, retryNonce]);
+  }, [videoUrl, onComplete, retryNonce, isCustomStreaming]);
+
+  const handleCustomTranscriptSubmit = async () => {
+    const text = customTranscriptText.trim();
+    if (!text || isCustomStreaming) return;
+
+    setIsCustomStreaming(true);
+    setError(null);
+    setCurrentStep(0);
+    setProgress(15);
+    setLiveMessage("Connecting to ingestion stream with custom transcript...");
+
+    try {
+      const apiBase = import.meta.env.VITE_API_BASE_URL || "";
+      const sseUrl = `${apiBase}/api/search/ingest-stream`;
+
+      const response = await fetch(sseUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          videoUrl,
+          transcript: text,
+          force: true,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Server returned HTTP ${response.status}`);
+      }
+
+      if (!response.body) {
+        throw new Error("No response stream body available.");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() || "";
+
+        for (const block of parts) {
+          const trimmedBlock = block.trim();
+          if (trimmedBlock.startsWith("data: ")) {
+            try {
+              const data = JSON.parse(trimmedBlock.slice(6));
+              if (data.error) {
+                setError(data.error);
+                setIsCustomStreaming(false);
+                return;
+              }
+              if (typeof data.step === "number") setCurrentStep(data.step);
+              if (typeof data.progress === "number") setProgress(data.progress);
+              if (data.message) setLiveMessage(data.message);
+
+              if (data.done) {
+                setProgress(100);
+                setCurrentStep(4);
+                setTimeout(() => {
+                  onComplete?.(data.result);
+                }, 800);
+                return;
+              }
+            } catch {
+              // Ignore non-json
+            }
+          }
+        }
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to stream custom transcript ingestion."
+      );
+    } finally {
+      setIsCustomStreaming(false);
+    }
+  };
 
   const thumbnailUrl = videoId
     ? `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`
@@ -137,6 +225,8 @@ export function IngestionLoader({
 
   const handleRetry = () => {
     setError(null);
+    setShowPasteModal(false);
+    setIsCustomStreaming(false);
     setCurrentStep(0);
     setProgress(10);
     // Bump the nonce so the SSE effect re-runs and re-opens the stream.
@@ -269,25 +359,93 @@ export function IngestionLoader({
           </>
         ) : (
           /* Error State Actions */
-          <div className="flex flex-col sm:flex-row items-center gap-3 mt-4 w-full justify-center">
-            {onCancel && (
-              <button
-                type="button"
-                onClick={onCancel}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 text-xs text-neutral-300 cursor-pointer transition-colors"
-              >
-                <ArrowLeft className="w-3.5 h-3.5" />
-                Back to Search
-              </button>
+          <div className="w-full flex flex-col items-center gap-3 mt-4">
+            {showPasteModal ? (
+              <div className="w-full p-4 sm:p-5 rounded-2xl bg-neutral-900/95 border border-neutral-800 text-left space-y-3.5 shadow-2xl backdrop-blur-md">
+                <div className="flex items-center justify-between border-b border-neutral-800/80 pb-2.5">
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-red-400" />
+                    <span className="text-xs sm:text-sm font-bold text-neutral-100">
+                      Paste Transcript or Subtitles
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowPasteModal(false)}
+                    className="text-xs text-neutral-400 hover:text-neutral-200 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+
+                <p className="text-[11px] text-neutral-400 leading-relaxed">
+                  YouTube blocked or does not have auto-captions for this video. Paste the transcript, notes, or subtitles below. Embeddings will be streamed in safe batches with zero timeouts.
+                </p>
+
+                <textarea
+                  rows={6}
+                  value={customTranscriptText}
+                  onChange={(e) => setCustomTranscriptText(e.target.value)}
+                  placeholder="Paste video transcript, subtitles, or notes here... (Supports timestamps like [01:23] or plain text)"
+                  className="w-full p-3 text-xs font-mono rounded-xl bg-neutral-950 border border-neutral-800 focus:border-red-500/70 focus:outline-none text-neutral-200 placeholder:text-neutral-600 resize-y leading-relaxed"
+                />
+
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-[10px] text-neutral-500 font-mono">
+                    {customTranscriptText.length > 0
+                      ? `${customTranscriptText.length.toLocaleString()} characters`
+                      : "Supports any length"}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowPasteModal(false)}
+                      className="px-3 py-1.5 rounded-xl text-xs text-neutral-400 hover:text-neutral-200 cursor-pointer"
+                    >
+                      Back
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!customTranscriptText.trim() || isCustomStreaming}
+                      onClick={handleCustomTranscriptSubmit}
+                      className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 disabled:opacity-40 text-xs text-white font-medium shadow-md shadow-red-600/30 cursor-pointer transition-all active:scale-95"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>{isCustomStreaming ? "Streaming..." : "Stream Ingest Video"}</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col sm:flex-row items-center gap-2.5 w-full justify-center">
+                {onCancel && (
+                  <button
+                    type="button"
+                    onClick={onCancel}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 text-xs text-neutral-300 cursor-pointer transition-colors"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                    Back to Search
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleRetry}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-neutral-800/90 hover:bg-neutral-800 border border-neutral-700/80 text-xs text-neutral-200 font-medium cursor-pointer transition-all active:scale-95"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Retry Connection
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowPasteModal(true)}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-xs text-white font-medium shadow-md shadow-red-600/30 cursor-pointer transition-all active:scale-95"
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  Paste Transcript
+                </button>
+              </div>
             )}
-            <button
-              type="button"
-              onClick={handleRetry}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-xs text-white font-medium shadow-md shadow-red-600/30 cursor-pointer transition-all active:scale-95"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              Retry Connection
-            </button>
           </div>
         )}
 

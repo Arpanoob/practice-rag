@@ -75,10 +75,8 @@ export function ChatPanel({
   const [inputText, setInputText] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { search, isLoading } = useSearch({
-    endpoint: "/api/ask",
     defaultVideoUrl: videoUrl,
   });
-
   // Auto scroll to latest message
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
